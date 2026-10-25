@@ -77,6 +77,16 @@ impl<T: ComplexField, R: Dim, C: Dim, S: Storage<T, R, C>> Matrix<T, R, C, S> {
     /// Computes the Singular Value Decomposition using implicit shift.
     /// The singular values are guaranteed to be sorted in descending order.
     /// If this order is not required consider using `svd_unordered`.
+    ///
+    /// Uses an unlimited iteration budget. Even finite inputs can overflow during
+    /// computation or fail to converge, so this call may never return. Use
+    /// [`Self::try_svd`] with a positive `max_niter` to limit iterations
+    /// and handle failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is empty or contains non-finite entries.
+    /// May also panic if computation produces NaN singular values that cannot be sorted.
     pub fn svd(self, compute_u: bool, compute_v: bool) -> SVD<T, R, C>
     where
         R: DimMin<C>,
@@ -95,6 +105,15 @@ impl<T: ComplexField, R: Dim, C: Dim, S: Storage<T, R, C>> Matrix<T, R, C, S> {
     /// Computes the Singular Value Decomposition using implicit shift.
     /// The singular values are not guaranteed to be sorted in any particular order.
     /// If a descending order is required, consider using `svd` instead.
+    ///
+    /// Uses an unlimited iteration budget. Even finite inputs can overflow during
+    /// computation or fail to converge, so this call may never return. Use
+    /// [`Self::try_svd_unordered`] with a positive `max_niter` to limit iterations
+    /// and handle failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is empty or contains non-finite entries.
     pub fn svd_unordered(self, compute_u: bool, compute_v: bool) -> SVD<T, R, C>
     where
         R: DimMin<C>,
@@ -113,16 +132,32 @@ impl<T: ComplexField, R: Dim, C: Dim, S: Storage<T, R, C>> Matrix<T, R, C, S> {
     /// Attempts to compute the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are guaranteed to be sorted in descending order.
     /// If this order is not required consider using `try_svd_unordered`.
-    /// Returns `None` if non-finite values are encountered during convergence.
+    ///
+    /// Returns `None` if any matrix entry or `eps` is non-finite, or if the
+    /// iteration budget is exhausted.
+    ///
+    /// # Convergence
+    ///
+    /// Matrix entries and `eps` are checked only before decomposition. Finite
+    /// inputs can still overflow during computation; a returned decomposition
+    /// is not guaranteed to contain only finite values.
+    ///
+    /// With `max_niter = 0`, there is no iteration limit and the call may never
+    /// return if convergence fails. A positive `max_niter` bounds the number of
+    /// iterations, not elapsed time or the validity of the result.
     ///
     /// # Arguments
     ///
     /// * `compute_u` − set this to `true` to enable the computation of left-singular vectors.
     /// * `compute_v` − set this to `true` to enable the computation of right-singular vectors.
     /// * `eps`       − tolerance used to determine when a value converged to 0.
-    /// * `max_niter` − maximum total number of iterations performed by the algorithm. If this
-    ///   number of iteration is exceeded, `None` is returned. If `niter == 0`, then the algorithm
-    ///   continues indefinitely until convergence.
+    /// * `max_niter` − maximum total number of iterations performed by the algorithm.
+    ///   `None` is returned when this budget is exhausted. Set to `0` for no limit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is empty.
+    /// May also panic if computation produces NaN singular values that cannot be sorted.
     pub fn try_svd(
         self,
         compute_u: bool,
@@ -147,16 +182,31 @@ impl<T: ComplexField, R: Dim, C: Dim, S: Storage<T, R, C>> Matrix<T, R, C, S> {
     /// Attempts to compute the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are not guaranteed to be sorted in any particular order.
     /// If a descending order is required, consider using `try_svd` instead.
-    /// Returns `None` if non-finite values are encountered during convergence.
+    ///
+    /// Returns `None` if any matrix entry or `eps` is non-finite, or if the
+    /// iteration budget is exhausted.
+    ///
+    /// # Convergence
+    ///
+    /// Matrix entries and `eps` are checked only before decomposition. Finite
+    /// inputs can still overflow during computation; a returned decomposition
+    /// is not guaranteed to contain only finite values.
+    ///
+    /// With `max_niter = 0`, there is no iteration limit and the call may never
+    /// return if convergence fails. A positive `max_niter` bounds the number of
+    /// iterations, not elapsed time or the validity of the result.
     ///
     /// # Arguments
     ///
     /// * `compute_u` − set this to `true` to enable the computation of left-singular vectors.
     /// * `compute_v` − set this to `true` to enable the computation of right-singular vectors.
     /// * `eps`       − tolerance used to determine when a value converged to 0.
-    /// * `max_niter` − maximum total number of iterations performed by the algorithm. If this
-    ///   number of iteration is exceeded, `None` is returned. If `niter == 0`, then the algorithm
-    ///   continues indefinitely until convergence.
+    /// * `max_niter` − maximum total number of iterations performed by the algorithm.
+    ///   `None` is returned when this budget is exhausted. Set to `0` for no limit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is empty.
     pub fn try_svd_unordered(
         self,
         compute_u: bool,

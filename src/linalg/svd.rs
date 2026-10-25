@@ -90,6 +90,15 @@ where
     /// Computes the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are not guaranteed to be sorted in any particular order.
     /// If a descending order is required, consider using `new` instead.
+    ///
+    /// Uses an unlimited iteration budget. Even finite inputs can overflow during
+    /// computation or fail to converge, so this call may never return. Use
+    /// [`Self::try_new_unordered`] with a positive `max_niter` to limit iterations
+    /// and handle failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is empty or contains non-finite entries.
     pub fn new_unordered(matrix: OMatrix<T, R, C>, compute_u: bool, compute_v: bool) -> Self {
         Self::try_new_unordered(
             matrix,
@@ -104,16 +113,31 @@ where
     /// Attempts to compute the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are not guaranteed to be sorted in any particular order.
     /// If a descending order is required, consider using `try_new` instead.
-    /// Returns `None` if non-finite values are encountered during convergence.
+    ///
+    /// Returns `None` if any matrix entry or `eps` is non-finite, or if the
+    /// iteration budget is exhausted.
+    ///
+    /// # Convergence
+    ///
+    /// Matrix entries and `eps` are checked only before decomposition. Finite
+    /// inputs can still overflow during computation; a returned decomposition
+    /// is not guaranteed to contain only finite values.
+    ///
+    /// With `max_niter = 0`, there is no iteration limit and the call may never
+    /// return if convergence fails. A positive `max_niter` bounds the number of
+    /// iterations, not elapsed time or the validity of the result.
     ///
     /// # Arguments
     ///
     /// * `compute_u` − set this to `true` to enable the computation of left-singular vectors.
     /// * `compute_v` − set this to `true` to enable the computation of right-singular vectors.
     /// * `eps`       − tolerance used to determine when a value converged to 0.
-    /// * `max_niter` − maximum total number of iterations performed by the algorithm. If this
-    ///   number of iteration is exceeded, `None` is returned. If `niter == 0`, then the algorithm
-    ///   continues indefinitely until convergence.
+    /// * `max_niter` − maximum total number of iterations performed by the algorithm.
+    ///   `None` is returned when this budget is exhausted. Set to `0` for no limit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is empty.
     pub fn try_new_unordered(
         mut matrix: OMatrix<T, R, C>,
         compute_u: bool,
@@ -125,6 +149,10 @@ where
             !matrix.is_empty(),
             "Cannot compute the SVD of an empty matrix."
         );
+        // Validate inputs once, before entering either specialized or iterative algorithms.
+        if !eps.is_finite() || matrix.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
         let (nrows, ncols) = matrix.shape_generic();
         let min_nrows_ncols = nrows.min(ncols);
 
@@ -132,13 +160,6 @@ where
             // SAFETY: the reference transmutes are OK since we checked that the types match exactly.
             let matrix: &Matrix2<T::RealField> = unsafe { std::mem::transmute(&matrix) };
             let result = super::svd2::svd_ordered2(matrix, compute_u, compute_v);
-            if result
-                .singular_values
-                .iter()
-                .any(|value| !value.is_finite())
-            {
-                return None;
-            }
             let typed_result: &Self = unsafe { std::mem::transmute(&result) };
             return Some(typed_result.clone());
         } else if Self::use_special_always_ordered_svd3() {
@@ -176,7 +197,7 @@ where
             bi_matrix.is_upper_diagonal(),
             dim - 1,
             eps.clone(),
-        )?;
+        );
 
         while end != start {
             let subdim = end - start + 1;
@@ -325,7 +346,7 @@ where
                 bi_matrix.is_upper_diagonal(),
                 end,
                 eps.clone(),
-            )?;
+            );
             start = sub.0;
             end = sub.1;
 
@@ -380,17 +401,7 @@ where
         is_upper_diagonal: bool,
         end: usize,
         eps: T::RealField,
-    ) -> Option<(usize, usize)> {
-        // NaN makes convergence comparisons false, and infinity can make them
-        // spuriously true. Neither represents a converged decomposition.
-        if !eps.is_finite()
-            || diagonal
-                .iter()
-                .chain(off_diagonal.iter())
-                .any(|value| !value.is_finite())
-        {
-            return None;
-        }
+    ) -> (usize, usize) {
         let mut n = end;
 
         while n > 0 {
@@ -441,7 +452,7 @@ where
         }
 
         if n == 0 {
-            return Some((0, 0));
+            return (0, 0);
         }
 
         let mut new_start = n - 1;
@@ -483,7 +494,7 @@ where
             new_start -= 1;
         }
 
-        Some((new_start, n))
+        (new_start, n)
     }
 
     // Cancels the i-th off-diagonal element using givens rotations.
@@ -705,6 +716,16 @@ where
     /// Computes the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are guaranteed to be sorted in descending order.
     /// If this order is not required consider using `new_unordered`.
+    ///
+    /// Uses an unlimited iteration budget. Even finite inputs can overflow during
+    /// computation or fail to converge, so this call may never return. Use
+    /// [`Self::try_new`] with a positive `max_niter` to limit iterations
+    /// and handle failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is empty or contains non-finite entries.
+    /// May also panic if computation produces NaN singular values that cannot be sorted.
     pub fn new(matrix: OMatrix<T, R, C>, compute_u: bool, compute_v: bool) -> Self {
         let mut svd = Self::new_unordered(matrix, compute_u, compute_v);
 
@@ -718,16 +739,32 @@ where
     /// Attempts to compute the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are guaranteed to be sorted in descending order.
     /// If this order is not required consider using `try_new_unordered`.
-    /// Returns `None` if non-finite values are encountered during convergence.
+    ///
+    /// Returns `None` if any matrix entry or `eps` is non-finite, or if the
+    /// iteration budget is exhausted.
+    ///
+    /// # Convergence
+    ///
+    /// Matrix entries and `eps` are checked only before decomposition. Finite
+    /// inputs can still overflow during computation; a returned decomposition
+    /// is not guaranteed to contain only finite values.
+    ///
+    /// With `max_niter = 0`, there is no iteration limit and the call may never
+    /// return if convergence fails. A positive `max_niter` bounds the number of
+    /// iterations, not elapsed time or the validity of the result.
     ///
     /// # Arguments
     ///
     /// * `compute_u` − set this to `true` to enable the computation of left-singular vectors.
     /// * `compute_v` − set this to `true` to enable the computation of right-singular vectors.
     /// * `eps`       − tolerance used to determine when a value converged to 0.
-    /// * `max_niter` − maximum total number of iterations performed by the algorithm. If this
-    ///   number of iteration is exceeded, `None` is returned. If `niter == 0`, then the algorithm
-    ///   continues indefinitely until convergence.
+    /// * `max_niter` − maximum total number of iterations performed by the algorithm.
+    ///   `None` is returned when this budget is exhausted. Set to `0` for no limit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is empty.
+    /// May also panic if computation produces NaN singular values that cannot be sorted.
     pub fn try_new(
         matrix: OMatrix<T, R, C>,
         compute_u: bool,

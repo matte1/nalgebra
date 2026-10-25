@@ -100,23 +100,12 @@ fn svd_rejects_non_finite_entries() {
 }
 
 #[test]
-fn svd_rejects_non_finite_intermediates() {
-    macro_rules! check {
-        ($scalar:ty, $eps:expr) => {
-            // Finite inputs can overflow in the specialized decompositions.
-            assert_svd_rejected!(na::Matrix2::from_element(<$scalar>::MAX), $eps, [0, 10]);
-            assert_svd_rejected!(na::Matrix3::from_element(<$scalar>::MAX), $eps, [0, 10]);
-        };
-    }
-    check!(f32, 1.0e-6);
-    check!(f64, 1.0e-12);
-}
-
-#[test]
-fn svd_rejects_non_finite_convergence_tolerance() {
+fn svd_rejects_non_finite_input_tolerance() {
     macro_rules! check {
         ($scalar:ty) => {
             for eps in [<$scalar>::NAN, <$scalar>::INFINITY, <$scalar>::NEG_INFINITY] {
+                assert_svd_rejected!(na::Matrix1::<$scalar>::identity(), eps, [0, 10]);
+                assert_svd_rejected!(na::Matrix2::<$scalar>::identity(), eps, [0, 10]);
                 assert_svd_rejected!(DMatrix::<$scalar>::identity(4, 4), eps, [0, 10]);
                 assert_svd_rejected!(na::Matrix3::<$scalar>::identity(), eps, [0, 10]);
             }
