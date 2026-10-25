@@ -1,5 +1,83 @@
 use na::{Complex, DMatrix, Matrix3};
 
+#[test]
+fn symmetric_eigen_rejects_non_finite_entries() {
+    macro_rules! check {
+        ($matrix:expr, $invalid:expr) => {{
+            let matrix = $matrix;
+            // Only the lower triangle is part of the symmetric input.
+            for row in 0..matrix.nrows() {
+                for col in 0..=row {
+                    let mut matrix = matrix.clone();
+                    matrix[(row, col)] = $invalid;
+                    for max_niter in [0, 10] {
+                        assert!(
+                            matrix
+                                .clone()
+                                .try_symmetric_eigen(1.0e-6, max_niter)
+                                .is_none(),
+                            "accepted non-finite entry at ({row}, {col}), max_niter={max_niter}"
+                        );
+                    }
+                }
+            }
+        }};
+    }
+
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        check!(na::Matrix2::<f64>::identity(), invalid);
+        check!(Matrix3::<f64>::identity(), invalid);
+        check!(na::Matrix4::<f64>::identity(), invalid);
+        check!(DMatrix::<f64>::identity(4, 4), invalid);
+        check!(
+            DMatrix::<Complex<f64>>::identity(4, 4),
+            Complex::new(invalid, 0.0)
+        );
+    }
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        check!(Matrix3::<f32>::identity(), invalid);
+        check!(DMatrix::<f32>::identity(4, 4), invalid);
+    }
+}
+
+#[test]
+fn symmetric_eigen_rejects_non_finite_imaginary_off_diagonal() {
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for row in 1..4 {
+            for col in 0..row {
+                let mut matrix = DMatrix::<Complex<f64>>::identity(4, 4);
+                matrix[(row, col)] = Complex::new(0.0, invalid);
+                for max_niter in [0, 10] {
+                    assert!(
+                        matrix
+                            .clone()
+                            .try_symmetric_eigen(1.0e-12, max_niter)
+                            .is_none()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn symmetric_eigen_rejects_non_finite_convergence_tolerance() {
+    for eps in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for max_niter in [0, 10] {
+            assert!(
+                Matrix3::<f64>::identity()
+                    .try_symmetric_eigen(eps, max_niter)
+                    .is_none()
+            );
+            assert!(
+                DMatrix::<f64>::identity(4, 4)
+                    .try_symmetric_eigen(eps, max_niter)
+                    .is_none()
+            );
+        }
+    }
+}
+
 #[cfg(feature = "proptest-support")]
 mod proptest_tests {
     macro_rules! gen_tests(

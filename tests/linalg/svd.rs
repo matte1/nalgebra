@@ -1,6 +1,219 @@
 use crate::utils::is_sorted_descending;
 use na::{DMatrix, Matrix6};
 
+// Exercise the public fallible APIs with and without singular vectors, including
+// the unlimited iteration setting that previously allowed non-finite inputs to hang.
+macro_rules! assert_svd_rejected {
+    ($matrix:expr, $eps:expr, $limits:expr) => {{
+        let matrix = $matrix;
+        for (compute_u, compute_v) in [(false, false), (false, true), (true, false), (true, true)] {
+            for max_niter in $limits {
+                for (ordered, result) in [
+                    (
+                        true,
+                        matrix
+                            .clone()
+                            .try_svd(compute_u, compute_v, $eps, max_niter),
+                    ),
+                    (
+                        false,
+                        matrix
+                            .clone()
+                            .try_svd_unordered(compute_u, compute_v, $eps, max_niter),
+                    ),
+                ] {
+                    assert!(
+                        result.is_none(),
+                        "expected None for {matrix:?}, eps={:?}, ordered={ordered}, \
+                         compute_u={compute_u}, compute_v={compute_v}, max_niter={max_niter}",
+                        $eps
+                    );
+                }
+            }
+        }
+    }};
+}
+
+#[test]
+fn svd_rejects_non_finite_entries() {
+    macro_rules! check_matrix {
+        ($matrix:expr, $invalid:expr, $eps:expr) => {{
+            let matrix = $matrix;
+            // Check every position: a maximum reduction can otherwise hide a NaN.
+            for index in 0..matrix.len() {
+                let mut matrix = matrix.clone();
+                matrix[index] = $invalid;
+                assert_svd_rejected!(matrix, $eps, [0, 10]);
+            }
+        }};
+    }
+    macro_rules! check_scalar {
+        ($scalar:ty, $eps:expr) => {
+            for invalid in [<$scalar>::NAN, <$scalar>::INFINITY, <$scalar>::NEG_INFINITY] {
+                check_matrix!(na::Matrix1::<$scalar>::identity(), invalid, $eps);
+                check_matrix!(na::Matrix2::<$scalar>::identity(), invalid, $eps);
+                check_matrix!(na::Matrix3::<$scalar>::identity(), invalid, $eps);
+                check_matrix!(na::Matrix4::<$scalar>::identity(), invalid, $eps);
+                for (rows, cols) in [
+                    (1, 1),
+                    (1, 4),
+                    (4, 1),
+                    (2, 2),
+                    (3, 3),
+                    (4, 4),
+                    (4, 3),
+                    (3, 4),
+                ] {
+                    check_matrix!(DMatrix::<$scalar>::identity(rows, cols), invalid, $eps);
+                    for invalid in [
+                        na::Complex::new(invalid, 0.0),
+                        na::Complex::new(0.0, invalid),
+                    ] {
+                        check_matrix!(
+                            DMatrix::<na::Complex<$scalar>>::identity(rows, cols),
+                            invalid,
+                            $eps
+                        );
+                    }
+                }
+                // Complex static matrices use the generic algorithm even at 2x2 and 3x3.
+                for invalid in [
+                    na::Complex::new(invalid, 0.0),
+                    na::Complex::new(0.0, invalid),
+                ] {
+                    check_matrix!(
+                        na::Matrix2::<na::Complex<$scalar>>::identity(),
+                        invalid,
+                        $eps
+                    );
+                    check_matrix!(
+                        na::Matrix3::<na::Complex<$scalar>>::identity(),
+                        invalid,
+                        $eps
+                    );
+                }
+            }
+        };
+    }
+    check_scalar!(f32, 1.0e-6);
+    check_scalar!(f64, 1.0e-12);
+}
+
+#[test]
+fn svd_rejects_non_finite_intermediates() {
+    macro_rules! check {
+        ($scalar:ty, $eps:expr) => {
+            // Finite inputs can overflow in the specialized decompositions.
+            assert_svd_rejected!(na::Matrix2::from_element(<$scalar>::MAX), $eps, [0, 10]);
+            assert_svd_rejected!(na::Matrix3::from_element(<$scalar>::MAX), $eps, [0, 10]);
+        };
+    }
+    check!(f32, 1.0e-6);
+    check!(f64, 1.0e-12);
+}
+
+#[test]
+fn svd_rejects_non_finite_convergence_tolerance() {
+    macro_rules! check {
+        ($scalar:ty) => {
+            for eps in [<$scalar>::NAN, <$scalar>::INFINITY, <$scalar>::NEG_INFINITY] {
+                assert_svd_rejected!(DMatrix::<$scalar>::identity(4, 4), eps, [0, 10]);
+                assert_svd_rejected!(na::Matrix3::<$scalar>::identity(), eps, [0, 10]);
+            }
+        };
+    }
+    check!(f32);
+    check!(f64);
+}
+
+#[test]
+fn svd_3x3_iteration_limit_returns_none() {
+    macro_rules! check {
+        ($scalar:ty, $eps:expr) => {
+            let matrix = na::Matrix3::<$scalar>::new(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0);
+            // The specialized 3x3 path must propagate an eigensolver failure.
+            assert_svd_rejected!(matrix, $eps, [1]);
+            assert!(matrix.try_svd(true, true, $eps, 0).is_some());
+        };
+    }
+    check!(f32, 1.0e-6);
+    check!(f64, 1.0e-12);
+}
+
+#[test]
+fn svd_finite_small_matrices_still_reconstruct() {
+    macro_rules! check_matrix {
+        ($matrix:expr, $eps:expr, $tolerance:expr) => {{
+            let matrix = $matrix;
+            for (compute_u, compute_v) in
+                [(false, false), (false, true), (true, false), (true, true)]
+            {
+                for max_niter in [0, 100] {
+                    for (ordered, result) in [
+                        (
+                            true,
+                            matrix
+                                .clone()
+                                .try_svd(compute_u, compute_v, $eps, max_niter),
+                        ),
+                        (
+                            false,
+                            matrix
+                                .clone()
+                                .try_svd_unordered(compute_u, compute_v, $eps, max_niter),
+                        ),
+                    ] {
+                        let svd = result.expect("finite matrix should converge");
+                        assert_eq!(svd.u.is_some(), compute_u);
+                        assert_eq!(svd.v_t.is_some(), compute_v);
+                        assert!(
+                            svd.singular_values
+                                .iter()
+                                .all(|s| s.is_finite() && *s >= 0.0)
+                        );
+                        if ordered {
+                            assert!(is_sorted_descending(svd.singular_values.as_slice()));
+                        }
+                        if let Some(ref u) = svd.u {
+                            assert!(u.is_orthogonal($tolerance));
+                        }
+                        if let Some(ref v_t) = svd.v_t {
+                            assert!(v_t.is_orthogonal($tolerance));
+                        }
+                        if compute_u && compute_v {
+                            assert_relative_eq!(
+                                svd.recompose().unwrap(),
+                                matrix,
+                                epsilon = $tolerance
+                            );
+                        }
+                    }
+                }
+            }
+        }};
+    }
+    macro_rules! check_scalar {
+        ($scalar:ty, $eps:expr, $tolerance:expr) => {
+            for matrix in [
+                na::Matrix2::<$scalar>::zeros(),
+                na::Matrix2::identity(),
+                na::Matrix2::new(1.0, 2.0, 3.0, 5.0),
+            ] {
+                check_matrix!(matrix, $eps, $tolerance);
+            }
+            for matrix in [
+                na::Matrix3::<$scalar>::zeros(),
+                na::Matrix3::identity(),
+                na::Matrix3::new(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0),
+            ] {
+                check_matrix!(matrix, $eps, $tolerance);
+            }
+        };
+    }
+    check_scalar!(f32, 1.0e-6, 1.0e-4);
+    check_scalar!(f64, 1.0e-12, 1.0e-9);
+}
+
 #[cfg(feature = "proptest-support")]
 mod proptest_tests {
     macro_rules! gen_tests(

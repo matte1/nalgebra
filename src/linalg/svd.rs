@@ -104,6 +104,7 @@ where
     /// Attempts to compute the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are not guaranteed to be sorted in any particular order.
     /// If a descending order is required, consider using `try_new` instead.
+    /// Returns `None` if non-finite values are encountered during convergence.
     ///
     /// # Arguments
     ///
@@ -131,12 +132,19 @@ where
             // SAFETY: the reference transmutes are OK since we checked that the types match exactly.
             let matrix: &Matrix2<T::RealField> = unsafe { std::mem::transmute(&matrix) };
             let result = super::svd2::svd_ordered2(matrix, compute_u, compute_v);
+            if result
+                .singular_values
+                .iter()
+                .any(|value| !value.is_finite())
+            {
+                return None;
+            }
             let typed_result: &Self = unsafe { std::mem::transmute(&result) };
             return Some(typed_result.clone());
         } else if Self::use_special_always_ordered_svd3() {
             // SAFETY: the reference transmutes are OK since we checked that the types match exactly.
             let matrix: &Matrix3<T::RealField> = unsafe { std::mem::transmute(&matrix) };
-            let result = super::svd3::svd_ordered3(matrix, compute_u, compute_v, eps, max_niter);
+            let result = super::svd3::svd_ordered3(matrix, compute_u, compute_v, eps, max_niter)?;
             let typed_result: &Self = unsafe { std::mem::transmute(&result) };
             return Some(typed_result.clone());
         }
@@ -168,7 +176,7 @@ where
             bi_matrix.is_upper_diagonal(),
             dim - 1,
             eps.clone(),
-        );
+        )?;
 
         while end != start {
             let subdim = end - start + 1;
@@ -317,7 +325,7 @@ where
                 bi_matrix.is_upper_diagonal(),
                 end,
                 eps.clone(),
-            );
+            )?;
             start = sub.0;
             end = sub.1;
 
@@ -372,7 +380,17 @@ where
         is_upper_diagonal: bool,
         end: usize,
         eps: T::RealField,
-    ) -> (usize, usize) {
+    ) -> Option<(usize, usize)> {
+        // NaN makes convergence comparisons false, and infinity can make them
+        // spuriously true. Neither represents a converged decomposition.
+        if !eps.is_finite()
+            || diagonal
+                .iter()
+                .chain(off_diagonal.iter())
+                .any(|value| !value.is_finite())
+        {
+            return None;
+        }
         let mut n = end;
 
         while n > 0 {
@@ -423,7 +441,7 @@ where
         }
 
         if n == 0 {
-            return (0, 0);
+            return Some((0, 0));
         }
 
         let mut new_start = n - 1;
@@ -465,7 +483,7 @@ where
             new_start -= 1;
         }
 
-        (new_start, n)
+        Some((new_start, n))
     }
 
     // Cancels the i-th off-diagonal element using givens rotations.
@@ -700,6 +718,7 @@ where
     /// Attempts to compute the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are guaranteed to be sorted in descending order.
     /// If this order is not required consider using `try_new_unordered`.
+    /// Returns `None` if non-finite values are encountered during convergence.
     ///
     /// # Arguments
     ///

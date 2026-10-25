@@ -129,7 +129,7 @@ where
 
         let mut niter = 0;
         let (mut start, mut end) =
-            Self::delimit_subproblem(&diag, &mut off_diag, dim - 1, eps.clone());
+            Self::delimit_subproblem(&diag, &mut off_diag, dim - 1, eps.clone())?;
 
         while end != start {
             let subdim = end - start + 1;
@@ -237,7 +237,7 @@ where
             }
 
             // Re-delimit the subproblem in case some decoupling occurred.
-            let sub = Self::delimit_subproblem(&diag, &mut off_diag, end, eps.clone());
+            let sub = Self::delimit_subproblem(&diag, &mut off_diag, end, eps.clone())?;
 
             start = sub.0;
             end = sub.1;
@@ -258,11 +258,20 @@ where
         off_diag: &mut OVector<T::RealField, DimDiff<D, U1>>,
         end: usize,
         eps: T::RealField,
-    ) -> (usize, usize)
+    ) -> Option<(usize, usize)>
     where
         D: DimSub<U1>,
         DefaultAllocator: Allocator<DimDiff<D, U1>>,
     {
+        // This convergence test is also used by the specialized 3x3 SVD.
+        if !eps.is_finite()
+            || diag
+                .iter()
+                .chain(off_diag.iter())
+                .any(|value| !value.is_finite())
+        {
+            return None;
+        }
         let mut n = end;
 
         while n > 0 {
@@ -278,7 +287,7 @@ where
         }
 
         if n == 0 {
-            return (0, 0);
+            return Some((0, 0));
         }
 
         let mut new_start = n - 1;
@@ -296,7 +305,7 @@ where
             new_start -= 1;
         }
 
-        (new_start, n)
+        Some((new_start, n))
     }
 
     /// Rebuild the original matrix.

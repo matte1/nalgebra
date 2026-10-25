@@ -113,6 +113,7 @@ impl<T: ComplexField, R: Dim, C: Dim, S: Storage<T, R, C>> Matrix<T, R, C, S> {
     /// Attempts to compute the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are guaranteed to be sorted in descending order.
     /// If this order is not required consider using `try_svd_unordered`.
+    /// Returns `None` if non-finite values are encountered during convergence.
     ///
     /// # Arguments
     ///
@@ -146,6 +147,7 @@ impl<T: ComplexField, R: Dim, C: Dim, S: Storage<T, R, C>> Matrix<T, R, C, S> {
     /// Attempts to compute the Singular Value Decomposition of `matrix` using implicit shift.
     /// The singular values are not guaranteed to be sorted in any particular order.
     /// If a descending order is required, consider using `try_svd` instead.
+    /// Returns `None` if non-finite values are encountered during convergence.
     ///
     /// # Arguments
     ///
